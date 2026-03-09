@@ -101,10 +101,15 @@ class Table extends Module {
     this.registerToolbarTable(options?.toolbarTable);
   }
 
-  // Ensure table-related attributes in delta ops are always processed in the
-  // correct order, regardless of how they arrive from the server.  Quill's
-  // applyDelta iterates Object.keys(attributes); line formats must come before
-  // container formats for the blot hierarchy to build correctly.
+  // Patch setContents and updateContents to:
+  // 1. Normalize table attribute ordering (line formats before container
+  //    formats) so the blot hierarchy builds correctly regardless of how
+  //    keys are ordered in the incoming delta.
+  // 2. Route setContents through updateContents (applyDelta) instead of
+  //    insertContents, because Quill's Scroll.createBlock() misidentifies
+  //    table container blots (TableCell, TableTh) as block-level line blots,
+  //    breaking the blot hierarchy.
+  //    See: https://github.com/slab/quill/pull/4398
   private patchContentMethods(quill: Quill) {
     const normalize = (delta: Delta | { ops: Delta['ops'] }) => {
       if (delta instanceof Delta) {
@@ -116,15 +121,21 @@ class Table extends Module {
       return delta;
     };
 
-    const origSetContents = quill.setContents.bind(quill);
-    quill.setContents = ((delta: any, source?: any) => {
-      return origSetContents(normalize(delta), source);
-    }) as typeof quill.setContents;
-
     const origUpdateContents = quill.updateContents.bind(quill);
     quill.updateContents = ((delta: any, source?: any) => {
       return origUpdateContents(normalize(delta), source);
     }) as typeof quill.updateContents;
+
+    // Route setContents through updateContents (applyDelta path).
+    // applyDelta builds the table hierarchy correctly from the inside out
+    // via TableCellBlock.format(), whereas insertContents/createBlock
+    // tries to build it from the outside in and misidentifies containers.
+    quill.setContents = ((delta: any, source?: any) => {
+      const normalized = normalize(delta) as Delta;
+      const length = quill.getLength();
+      const combined = new Delta().delete(length).concat(normalized);
+      return origUpdateContents(combined, source);
+    }) as typeof quill.setContents;
   }
 
   clearHistorySelected() {
