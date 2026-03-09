@@ -118,7 +118,10 @@ class Table extends Module {
       if (delta && Array.isArray((delta as any).ops)) {
         return new Delta(normalizeTableAttributes((delta as any).ops));
       }
-      return delta;
+      if (Array.isArray(delta)) {
+        return new Delta(normalizeTableAttributes(delta as any));
+      }
+      return new Delta(delta as any);
     };
 
     const origUpdateContents = quill.updateContents.bind(quill);
