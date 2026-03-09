@@ -32,7 +32,7 @@ import CellSelection from './ui/cell-selection';
 import OperateLine from './ui/operate-line';
 import TableMenus from './ui/table-menus';
 import ToolbarTable, { TableSelect } from './ui/toolbar-table';
-import { getCellId, getCorrectCellBlot } from './utils';
+import { getCellId, getCorrectCellBlot, normalizeTableAttributes } from './utils';
 import TableToolbar from './modules/toolbar';
 import TableClipboard from './modules/clipboard';
 
@@ -84,6 +84,7 @@ class Table extends Module {
   
   constructor(quill: Quill, options: Options) {
     super(quill, options);
+    this.patchContentMethods(quill);
     quill.clipboard.addMatcher('td, th', matchTableCell);
     quill.clipboard.addMatcher('tr', matchTable);
     quill.clipboard.addMatcher('col', matchTableCol);
@@ -98,6 +99,32 @@ class Table extends Module {
     quill.root.addEventListener('scroll', this.handleScroll.bind(this));
     this.listenDeleteTable();
     this.registerToolbarTable(options?.toolbarTable);
+  }
+
+  // Ensure table-related attributes in delta ops are always processed in the
+  // correct order, regardless of how they arrive from the server.  Quill's
+  // applyDelta iterates Object.keys(attributes); line formats must come before
+  // container formats for the blot hierarchy to build correctly.
+  private patchContentMethods(quill: Quill) {
+    const normalize = (delta: Delta | { ops: Delta['ops'] }) => {
+      if (delta instanceof Delta) {
+        return new Delta(normalizeTableAttributes(delta.ops));
+      }
+      if (delta && Array.isArray((delta as any).ops)) {
+        return new Delta(normalizeTableAttributes((delta as any).ops));
+      }
+      return delta;
+    };
+
+    const origSetContents = quill.setContents.bind(quill);
+    quill.setContents = ((delta: any, source?: any) => {
+      return origSetContents(normalize(delta), source);
+    }) as typeof quill.setContents;
+
+    const origUpdateContents = quill.updateContents.bind(quill);
+    quill.updateContents = ((delta: any, source?: any) => {
+      return origUpdateContents(normalize(delta), source);
+    }) as typeof quill.updateContents;
   }
 
   clearHistorySelected() {
